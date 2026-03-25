@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Amazing Maze - SuperHero</title>
+    <style>
+        body {
+            background: url('/17.jpeg') no-repeat center center fixed;
+            background-size: cover;
+            color: white;
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        #game-container {
+            display: flex;
+            background-color: #2626266d;
+            padding: 20px;
+            border: 1px solid #555555b3;
+            transition: all 0.5s ease;
+        }
+        canvas { 
+            border: 2px solid #fff; 
+            background-color: #ff9b9b50; 
+        }
+        #ui-panel {
+            width: 180px; 
+            padding-left: 20px;
+            display: flex; 
+            flex-direction: column; 
+            gap: 15px;
+        }
+        h1 { margin: 0; font-size: 22px; }
+        .hero-text { color: #ff8080; font-weight: bold; font-size: 20px; }
+        .stat-item { font-size: 16px; margin-bottom: 5px; }
+        .warning { color: #ff4444; font-weight: bold; }
+        .goal-hint { font-size: 12px; color: #aaa; margin-top: 10px; }
+        #pause-btn {
+            background-color: #ff8080;
+            color: white;
+            font-size: 16px;
+            border: none;
+            padding: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        /* Blur effect for paused state */
+        .blurred {
+            filter: blur(5px);
+            pointer-events: none; /* Prevent interaction while paused */
+        }
+        /* Resume button in the center when paused */
+        #resume-btn {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 20px;
+            background-color: #ff4444;
+            color: white;
+            font-size: 18px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        /* Play Again button when game over */
+        #play-again-btn, #next-level-btn {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            padding: 20px;
+            background-color: #ff9b9b;
+            color: white;
+            font-size: 18px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            display: none; /* Initially hidden */
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="mazeCanvas"></canvas>
+    <div id="ui-panel">
+        <h1>Maze</h1>
+        <div class="hero-text">Super Layla</div>
+        
+        <div class="stats">
+            <div class="stat-item">Steps - <span id="steps">0</span></div>
+            <div class="stat-item">Time Left - <span id="time" class="warning">60</span>s</div>
+            <div class="stat-item">Food Left - <span id="food">0</span></div>
+            <div class="stat-item">Maps - <span id="level">1</span></div>
+        </div>
+
+        <div class="stat-item">mute OFF</div>
+        <div class="goal-hint">1. Eat all dots<br>2. Reach the Diamond 💎</div>
+        <div style="font-size: 12px; margin-top: auto;">3bata😍☝</div>
+
+        <button id="pause-btn">Pause</button> <!-- Pause button -->
+    </div>
+</div>
+
+<!-- Resume button (Initially hidden) -->
+<button id="resume-btn" style="display: none;">Resume Game</button>
+
+<!-- Play Again button (Initially hidden) -->
+<button id="play-again-btn">Play Again</button>
+
+<!-- Next Level button (Initially hidden) -->
+<button id="next-level-btn">Next Level</button>
+
+<script>
+    const canvas = document.getElementById('mazeCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game Config
+    let size = 500;
+    let rows = 12, cols = 12;
+    let cellSize, grid = [], stack = [];
+    let player = { x: 0, y: 0 };
+    let goal = { x: 0, y: 0 };
+    let foods = [];
+    
+    // Stats
+    let steps = 0, timeLeft = 60, level = 1, timerInterval;
+    let gamePaused = false; // Track the pause state
+    let gameOver = false; // Track game over state
+
+    class Cell {
+        constructor(r, c) {
+            this.r = r; this.c = c;
+            this.walls = [true, true, true, true]; // T, R, B, L
+            this.visited = false;
+            this.hasFood = false;
+            this.foodColor = ['#ff4444', '#ffeb3b', '#03a9f4'][Math.floor(Math.random()*3)];
+        }
+        show() {
+            let x = this.c * cellSize, y = this.r * cellSize;
+            ctx.strokeStyle = "white"; ctx.lineWidth = 2;
+            if (this.walls[0]) ctx.strokeRect(x, y, cellSize, 0);
+            if (this.walls[1]) ctx.strokeRect(x + cellSize, y, 0, cellSize);
+            if (this.walls[2]) ctx.strokeRect(x, y + cellSize, cellSize, 0);
+            if (this.walls[3]) ctx.strokeRect(x, y, 0, cellSize);
+            
+            if (this.hasFood) {
+                ctx.fillStyle = this.foodColor;
+                ctx.beginPath();
+                ctx.arc(x + cellSize/2, y + cellSize/2, cellSize/8, 0, Math.PI*2);
+                ctx.fill();
+            }
+        }
+    }
+
+    function setup() {
+        if (gameOver) return; // Don't re-setup if game is over
+        cellSize = size / cols;
+        canvas.width = size; canvas.height = size;
+        grid = []; stack = [];
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) grid.push(new Cell(r, c));
+        }
+        
+        // Maze Generation
+        let current = grid[0];
+        current.visited = true;
+        while (true) {
+            let next = getNeighbor(current);
+            if (next) {
+                next.visited = true;
+                stack.push(current);
+                removeWalls(current, next);
+                current = next;
+            } else if (stack.length > 0) {
+                current = stack.pop();
+            } else break;
+        }
+
+        // Place Food (Randomly on 15% of cells)
+        foods = 0;
+        grid.forEach(cell => {
+            if (Math.random() > 0.85 && (cell.r !== 0 || cell.c !== 0)) {
+                cell.hasFood = true;
+                foods++;
+            }
+        });
+
+        player = { x: 0, y: 0 };
+        goal = { x: cols - 1, y: rows - 1 };
+        steps = 0; 
+        timeLeft = 60 - (level * 2); // Less time as level increases
+        if(timeLeft < 15) timeLeft = 15;
+        
+        updateUI();
+        startTimer();
+        draw();
+    }
+
+    function getNeighbor(cell) {
+        let n = [], r = cell.r, c = cell.c;
+        let t = grid[idx(r-1, c)], rgt = grid[idx(r, c+1)], b = grid[idx(r+1, c)], l = grid[idx(r, c-1)];
+        if (t && !t.visited) n.push(t);
+        if (rgt && !rgt.visited) n.push(rgt);
+        if (b && !b.visited) n.push(b);
+        if (l && !l.visited) n.push(l);
+        return n.length > 0 ? n[Math.floor(Math.random()*n.length)] : undefined;
+    }
+
+    function idx(r, c) { return (r<0||c<0||r>=rows||c>=cols) ? -1 : c+r*cols; }
+
+    function removeWalls(a, b) {
+        let x = a.c - b.c;
+        if (x === -1) { a.walls[1]=false; b.walls[3]=false; } else if (x === 1) { a.walls[3]=false; b.walls[1]=false; }
+        let y = a.r - b.r;
+        if (y === -1) { a.walls[2]=false; b.walls[0]=false; } else if (y === 1) { a.walls[0]=false; b.walls[2]=false; }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        grid.forEach(c => c.show());
+
+        // Goal (Diamond shape)
+        ctx.fillStyle = foods === 0 ? "white" : "#444"; // Dims if food remains
+        ctx.save();
+        ctx.translate(goal.x*cellSize+cellSize/2, goal.y*cellSize+cellSize/2);
+        ctx.rotate(Math.PI/4);
+        ctx.fillRect(-cellSize/6, -cellSize/6, cellSize/3, cellSize/3);
+        ctx.restore();
+
+        // Player (The Square from your image)
+        ctx.fillStyle = "#5fb6ad";
+        ctx.shadowBlur = 10; ctx.shadowColor = "#5fb6ad";
+        ctx.fillRect(player.x*cellSize+cellSize/4, player.y*cellSize+cellSize/4, cellSize/2, cellSize/2);
+        ctx.shadowBlur = 0;
+    }
+
+    function move(dx, dy) {
+        if (gamePaused || gameOver) return; // Prevent movement if paused or game over
+        let cur = grid[idx(player.y, player.x)];
+        if ((dx==1 && !cur.walls[1]) || (dx==-1 && !cur.walls[3]) || (dy==1 && !cur.walls[2]) || (dy==-1 && !cur.walls[0])) {
+            player.x += dx; player.y += dy;
+            steps++;
+            let newPos = grid[idx(player.y, player.x)];
+            if (newPos.hasFood) {
+                newPos.hasFood = false;
+                foods--;
+            }
+            updateUI();
+            draw();
+            if (player.x === goal.x && player.y === goal.y) {
+                if (foods === 0) {
+                    showNextLevelButton(); // Show "Next Level" button
+                } else {
+                    ctx.fillStyle = "white";
+                    ctx.fillText("EAT ALL FOOD FIRST!", 10, 20);
+                }
+            }
+        }
+    }
+
+    function startTimer() {
+        if (gamePaused || gameOver) return; // Skip the timer if paused or game over
+        clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            timeLeft--;
+            updateUI();
+            if (timeLeft <= 0) {
+                clearInterval(timerInterval);
+                gameOver = true; // Set game over state
+                showPlayAgainButton(); // Show "Play Again" button
+            }
+        }, 1000);
+    }
+
+    function updateUI() {
+        document.getElementById('steps').innerText = steps;
+        document.getElementById('time').innerText = timeLeft;
+        document.getElementById('food').innerText = foods;
+        document.getElementById('level').innerText = level;
+    }
+
+    function showPlayAgainButton() {
+        document.getElementById('game-container').classList.add('blurred');
+        document.getElementById('play-again-btn').style.display = 'block';
+    }
+
+    function showNextLevelButton() {
+        document.getElementById('game-container').classList.add('blurred');
+        document.getElementById('next-level-btn').style.display = 'block';
+    }
+
+    // Play Again button logic
+    document.getElementById('play-again-btn').addEventListener('click', () => {
+        gameOver = false;
+        gamePaused = false;
+        document.getElementById('game-container').classList.remove('blurred');
+        document.getElementById('play-again-btn').style.display = 'none';
+        setup();
+    });
+
+    // Next Level button logic
+    document.getElementById('next-level-btn').addEventListener('click', () => {
+        level++; rows++; cols++; // Increase difficulty
+        gamePaused = false;
+        document.getElementById('game-container').classList.remove('blurred');
+        document.getElementById('next-level-btn').style.display = 'none';
+        setup();
+    });
+
+    // Pause button logic
+    document.getElementById('pause-btn').addEventListener('click', () => {
+        gamePaused = true;
+        clearInterval(timerInterval); // Stop the timer
+        document.getElementById('game-container').classList.add('blurred');
+        document.getElementById('pause-btn').style.display = 'none';
+        document.getElementById('resume-btn').style.display = 'block';
+    });
+
+    // Resume button logic
+    document.getElementById('resume-btn').addEventListener('click', () => {
+        gamePaused = false;
+        startTimer(); // Restart the timer
+        document.getElementById('game-container').classList.remove('blurred');
+        document.getElementById('pause-btn').style.display = 'block';
+        document.getElementById('resume-btn').style.display = 'none';
+    });
+
+    window.addEventListener('keydown', e => {
+        if(e.key.includes('Arrow')) e.preventDefault();
+        if(e.key === 'ArrowUp') move(0, -1);
+        if(e.key === 'ArrowDown') move(0, 1);
+        if(e.key === 'ArrowLeft') move(-1, 0);
+        if(e.key === 'ArrowRight') move(1, 0);
+    });
+
+    setup();
+</script>
+</body>
+</html>
